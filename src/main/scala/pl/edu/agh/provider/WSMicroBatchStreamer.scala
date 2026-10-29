@@ -145,9 +145,11 @@ case class WSMicroBatchStreamer[T <: Product: TypeTag](
           override def run(): Unit = {
             while (socket.isDefined && active) {
               Try(messageQueue.poll(1000, TimeUnit.MILLISECONDS)) match {
-                case Success(event) => 
+                case Success(event) =>
                   if (event != null) {
-                    batches.append(event)
+                    WSMicroBatchStreamer.this.synchronized {
+                      batches.append(event)
+                    }
                   }
                 case Failure(_) => 
                   log.warn("MessageQueue was interrupted")
@@ -191,29 +193,10 @@ case class WSMicroBatchStreamer[T <: Product: TypeTag](
     slices.map(WSInputPartition[T])
   }
 
+  // Spark serializes the reader factory into every task, so it must not refer to the streamer,
+  // whose buffers the websocket threads keep changing.
   override def createReaderFactory(): PartitionReaderFactory =
-    (partition: InputPartition) => {
-      val slice = partition.asInstanceOf[WSInputPartition[T]].slice
-      new PartitionReader[InternalRow] {
-        private var currentIdx = -1
-
-        override def next(): Boolean = {
-          currentIdx += 1
-          currentIdx < slice.size
-        }
-
-        override def get(): InternalRow = {
-          InternalRow(slice(currentIdx)._1, slice(currentIdx)._2)
-          encodeMessage(slice(currentIdx)._1)
-        }
-
-        override def close(): Unit = {}
-      }
-    }
-
-  private def encodeMessage(message: T): InternalRow = {
-    ExpressionEncoder[T]().createSerializer()(message)
-  }
+    WSReaderFactory[T](ExpressionEncoder[T]())
 
   override def stop(): Unit = {
     log.info("Stopping streamer")
@@ -252,3 +235,24 @@ case class WSMicroBatchStreamer[T <: Product: TypeTag](
 
 case class WSInputPartition[T](slice: ListBuffer[(T, Long)])
     extends InputPartition
+
+case class WSReaderFactory[T](encoder: ExpressionEncoder[T])
+    extends PartitionReaderFactory {
+
+  override def createReader(partition: InputPartition): PartitionReader[InternalRow] = {
+    val slice = partition.asInstanceOf[WSInputPartition[T]].slice
+    val serializer = encoder.createSerializer()
+    new PartitionReader[InternalRow] {
+      private var currentIdx = -1
+
+      override def next(): Boolean = {
+        currentIdx += 1
+        currentIdx < slice.size
+      }
+
+      override def get(): InternalRow = serializer(slice(currentIdx)._1)
+
+      override def close(): Unit = {}
+    }
+  }
+}
