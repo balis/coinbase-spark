@@ -9,7 +9,6 @@ import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import com.google.flatbuffers.Struct
 
 class WSProvider extends DataSourceRegister with TableProvider with Logging {
 

@@ -13,14 +13,12 @@ import org.apache.spark.sql.connector.read.{
 
 import java.nio.ByteBuffer
 import java.util.concurrent.{ArrayBlockingQueue, BlockingQueue, TimeUnit}
-import org.apache.spark.sql.execution.streaming.LongOffset
+import org.apache.spark.sql.execution.streaming.runtime.LongOffset
 import pl.edu.agh.model._
-import org.apache.spark.sql.Encoders
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import okhttp3._
 import okio.ByteString
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 import scala.util.{Try, Success, Failure}
 import io.circe.Decoder
@@ -30,7 +28,8 @@ import reflect.runtime.universe.TypeTag
 case class WSMicroBatchStreamer[T <: Product: TypeTag](
     numPartitions: Int,
     schemaTag: String,
-    websocketUrl: String
+    websocketUrl: String,
+    products: List[String]
 )(implicit decoder: Decoder[T], encoder: Encoder[T]) extends MicroBatchStream
     with Logging {
 
@@ -77,20 +76,7 @@ case class WSMicroBatchStreamer[T <: Product: TypeTag](
               response: Response
           ): Unit = {
             log.debug("Opened websocket connection...")
-            // Send out initial messages which we will get echoed back
-            // val subscribeMessage = ProtocolMessage(
-            //   "subscribe",
-            //   List(Channel("ticker", List("ETH-BTC", "ETH-USD")))
-            // )
-            // webSocket.send(Serializer(subscribeMessage))
-            val jsonToSubscribe = schemaTag match {
-              case "heartbeat" => """{"type": "subscribe","channels": [{ "name": "heartbeat", "product_ids": ["ETH-BTC","ETH-USD", "BTC-USD", "USD-BTC", "EUR-BTC", "BTC-EUR"] }]}"""
-              case "status" => ""
-              case "ticker" => """{"type": "subscribe","channels": [{"name": "ticker","product_ids": ["ETH-BTC","ETH-USD", "BTC-USD", "USD-BTC", "EUR-BTC", "BTC-EUR"]}]}"""
-              case "level2" => ""
-              case "auction" => """{"type": "auction","channels": [{ "name": "auctionfeed", "product_ids": ["ETH-BTC","ETH-USD", "BTC-USD", "USD-BTC", "EUR-BTC", "BTC-EUR"]}]}"""
-            }
-            webSocket.send(jsonToSubscribe)
+            webSocket.send(Subscription.message(schemaTag, products))
           }
 
           override def onClosed(
@@ -226,10 +212,7 @@ case class WSMicroBatchStreamer[T <: Product: TypeTag](
     }
 
   private def encodeMessage(message: T): InternalRow = {
-    val messageEncoder = Encoders.product[T]
-    val messageExprEncoder =
-      messageEncoder.asInstanceOf[ExpressionEncoder[T]]
-    messageExprEncoder.createSerializer()(message)
+    ExpressionEncoder[T]().createSerializer()(message)
   }
 
   override def stop(): Unit = {
@@ -238,7 +221,6 @@ case class WSMicroBatchStreamer[T <: Product: TypeTag](
     socket.foreach(_.close(1000, "Closing websocket normally"))
     if (worker.exists(_.isAlive)) {
       Try(worker.foreach(_.join()))
-      worker.foreach(_.stop())
     }
     log.info("Streamer stopped succesfully")
   }
@@ -255,7 +237,7 @@ case class WSMicroBatchStreamer[T <: Product: TypeTag](
         )
       }
 
-      batches.trimStart(offsetDiff)
+      batches.dropInPlace(offsetDiff)
       lastOffsetCommitted = newOffset
     }
 
