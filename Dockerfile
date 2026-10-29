@@ -1,26 +1,20 @@
-ARG BASE_CONTAINER=jupyter/all-spark-notebook
-FROM $BASE_CONTAINER AS base
+ARG BASE_CONTAINER=quay.io/jupyter/all-spark-notebook:spark-4.2.1
+ARG BUILDER_CONTAINER=sbtscala/scala-sbt:eclipse-temurin-21.0.12.1_1_1.13.1_2.13.18
 
-USER root
-
-FROM base AS builder
+FROM $BUILDER_CONTAINER AS builder
 
 WORKDIR /coinbase-spark
 
-COPY . .
-
-RUN apt-get update && apt-get install gnupg2 -y && \
-        echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | tee -a /etc/apt/sources.list.d/sbt.list && \
-        curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | apt-key add && \
-        apt-get update -y && \
-        apt-get install sbt -y
+COPY build.sbt .
+COPY project project
 
 RUN sbt update #prefetch dependencies & sbt
 
-RUN sbt clean assembly && \
-    echo "spark.jars ${HOME}/coinbase-spark/target/scala-2.12/coinbase-spark-assembly-0.1.0-SNAPSHOT.jar" > /usr/local/spark/conf/spark-defaults.conf
+COPY src src
 
-FROM base
+RUN sbt clean assembly
 
-COPY --from=builder /coinbase-spark/target/scala-2.12/coinbase-spark-assembly-0.1.0-SNAPSHOT.jar /usr/local/spark/jars
+FROM $BASE_CONTAINER
+
+COPY --from=builder /coinbase-spark/target/scala-2.13/coinbase-spark-assembly-0.1.0-SNAPSHOT.jar /usr/local/spark/jars
 COPY Notebook.ipynb work/

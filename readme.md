@@ -16,6 +16,10 @@ You can use the following channels:
 To subscribe to a specific channel one has to pass `schema` option value:
 `spark.readStream.format("ws").option("schema", "ticker").load()`
 
+The `products` option selects the markets as a comma-separated list of Coinbase product IDs.
+The default is `ETH-BTC,ETH-USD,BTC-USD,BTC-EUR`:
+`spark.readStream.format("ws").option("schema", "ticker").option("products", "BTC-USD,BTC-EUR,ETH-USD,ETH-EUR").load()`
+
 ## Build and Run
 
 - Build Docker image (optional, the image will be pulled from DockerHub)
