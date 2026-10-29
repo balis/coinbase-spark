@@ -5,7 +5,8 @@ import io.circe.parser.parse
 import io.circe.syntax._
 import java.sql.Timestamp
 import io.circe._, io.circe.parser._
-import java.text.SimpleDateFormat
+import java.time.Instant
+import scala.util.Try
 
 object Parser {
 
@@ -18,11 +19,8 @@ object Parser {
   implicit val TimestampFormat : Encoder[Timestamp] with Decoder[Timestamp] = new Encoder[Timestamp] with Decoder[Timestamp] {
     override def apply(a: Timestamp): Json = Encoder.encodeLong.apply(a.getTime)
 
-    override def apply(c: HCursor): Decoder.Result[Timestamp] = Decoder.decodeString.map { s =>
-      val dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'hh:mm:ss.SSS'Z'")
-      val parsedDate = dateFormat.parse(s.dropRight(4) + "Z")
-      new Timestamp(parsedDate.getTime()) 
-    }.apply(c)
+    override def apply(c: HCursor): Decoder.Result[Timestamp] =
+      Decoder.decodeString.emapTry(s => Try(Timestamp.from(Instant.parse(s)))).apply(c)
   }
 }
 
